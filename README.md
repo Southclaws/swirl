@@ -1,6 +1,8 @@
-# Golang Sliding Window Counters Rate Limiter
+# Swirl - Sliding Window Increment Rate Limit
 
-> _(I tried to come up with a nicer name...)_
+> Sliding Window ~~Counters~~ Increment\* rate limit implementation for Go
+
+_(\*the name ["swc"](https://swc.rs/) is already taken and who doesn't love a good backronym?)_
 
 This is a simple rate limiter built based on [this blog post](https://www.figma.com/blog/an-alternative-approach-to-rate-limiting) from Figma's engineering team.
 
@@ -11,33 +13,49 @@ See the post for information about the requirements and design of the actual alg
 The rate limiter satisfies this interface:
 
 ```go
-type Limiter interface {
-    Increment(context.Context, string, int) error
+Increment(ctx context.Context, key string, incr int) (*Status, bool, error)
+```
+
+- Status includes information you'd want to set in [`RateLimit` headers](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/).
+- Bool is whether the limit was exceeded or not, true means reject the request.
+- Errors occur for cache issues, such as Redis connectivity or malformed data.
+
+The implementation is store agnostic, however due to the way it works, Redis is the recommended approach due to the usage of [hash sets](https://redis.io/docs/latest/develop/data-types/hashes/).
+
+The `incr` argument allows you to assign different weights to the action being rate limited. For example, a simple request may use a value of 1 and an expensive request may use a value of 10.
+
+```go
+status, exceeded, err := m.rl.Increment(ctx, key, cost)
+if err != nil {
+    http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+    return
 }
+
+limit := status.Limit
+remaining := status.Remaining
+resetTime := status.Reset.UTC().Format(time.RFC1123)
+
+w.Header().Set(RateLimitLimit, strconv.FormatUint(uint64(limit), 10))
+w.Header().Set(RateLimitRemaining, strconv.FormatUint(uint64(remaining), 10))
+w.Header().Set(RateLimitReset, resetTime)
+
+if exceeded {
+    // you shall not pass.
+    w.Header().Set(RetryAfter, resetTime)
+    http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)
+    return
+}
+
+// all good my g come thru
+next.ServeHTTP(w, r)
 ```
 
-The implementation is backed by Redis and uses the go-redis library.
+Note that according to the IETF spec, the `X-RateLimit-*` headers are not standardised, but commonly used. See the spec for advisories on `RateLimit-Policy` etc.
 
-```go
-client := goredis.NewClient(&goredis.Options{
-    Addr: "localhost:6379",
-})
+## `memory`
 
-ratelimiter := redis.New(client, 10, time.Minute, time.Hour)
+This is a very basic in-memory cache that mirrors the tiny subset of Redis-based hash set APIs necessary to use the rate limiter in pure Go. You can probably use this in a very basic single-server application but it's not covered by tests and has not been extensively used in production so... beware. Treat it as a testing mock.
 
-ratelimiter.Increment(ctx, "user_id", 1)
-```
+## HTTP middleware
 
-## Middleware
-
-There's a http middleware too, for convenience. Inspired by Seth Vargo's [rate limit](https://github.com/sethvargo/go-limiter) library:
-
-```go
-ratelimiter := redis.New(client, 10, time.Minute, time.Hour)
-mw := ratelimit.Middleware(ratelimiter, ratelimit.IPKeyFunc, 1)
-// use mw in your favourite HTTP library
-```
-
-The `Middleware` function has a `weight` parameter, which allows you to give a higher increment weight to certain routes. So for example, your base rate limit can be 1000 requests per hour and each request has a weight of 1, but a particularly computationally intensive endpoint may want to have a weight of 10, so each request increments the internal counter by 10 instead of 1.
-
-If you use multiple middleware instances, make sure you don't add one to the global mux/router otherwise your requests will be triggering two rate limit calculations (and thus, Redis network I/O operations). This could be solved in future by a centralised middleware controller that provides a tree of limiters with order of precedence rules etc.
+This package, unlike most rate limit packages, purposely does not include HTTP middleware, you probably want to write your own with your own logging, response logic, etc. anyway. It's super simple and the code above gets you most of the way already.
