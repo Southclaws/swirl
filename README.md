@@ -13,11 +13,11 @@ See the post for information about the requirements and design of the actual alg
 The rate limiter satisfies this interface:
 
 ```go
-Increment(ctx context.Context, key string, incr int) (*Status, bool, error)
+Increment(ctx context.Context, key string, incr int) (status *Status, allowed bool, err error)
 ```
 
 - Status includes information you'd want to set in [`RateLimit` headers](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/).
-- Bool is whether the limit was exceeded or not, true means reject the request.
+- Bool is whether action should be allowed or not, false means reject the action.
 - Errors occur for cache issues, such as Redis connectivity or malformed data.
 
 The implementation is store agnostic, however due to the way it works, Redis is the recommended approach due to the usage of [hash sets](https://redis.io/docs/latest/develop/data-types/hashes/).
@@ -25,7 +25,7 @@ The implementation is store agnostic, however due to the way it works, Redis is 
 The `incr` argument allows you to assign different weights to the action being rate limited. For example, a simple request may use a value of 1 and an expensive request may use a value of 10.
 
 ```go
-status, exceeded, err := m.rl.Increment(ctx, key, cost)
+status, allowed, err := m.rl.Increment(ctx, key, cost)
 if err != nil {
     http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
     return
@@ -39,7 +39,7 @@ w.Header().Set(RateLimitLimit, strconv.FormatUint(uint64(limit), 10))
 w.Header().Set(RateLimitRemaining, strconv.FormatUint(uint64(remaining), 10))
 w.Header().Set(RateLimitReset, resetTime)
 
-if exceeded {
+if !allowed {
     // you shall not pass.
     w.Header().Set(RetryAfter, resetTime)
     http.Error(w, http.StatusText(http.StatusTooManyRequests), http.StatusTooManyRequests)

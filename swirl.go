@@ -36,7 +36,7 @@ func New(store Store, limit int, period, expiry time.Duration) *Limiter {
 	}
 }
 
-func (l *Limiter) Increment(ctx context.Context, key string, incr int) (*Status, bool, error) {
+func (l *Limiter) Increment(ctx context.Context, key string, incr int) (status *Status, allowed bool, err error) {
 	now := time.Now()
 	timestamp := fmt.Sprint(now.Truncate(l.counterWindow).Unix())
 
@@ -53,7 +53,7 @@ func (l *Limiter) Increment(ctx context.Context, key string, incr int) (*Status,
 			Limit:     l.limit,
 			Period:    l.limitPeriod,
 			Reset:     now.Add(l.limitPeriod),
-		}, true, nil
+		}, false, nil
 	}
 
 	// create or move whole limit period window expiry
@@ -76,7 +76,10 @@ func (l *Limiter) Increment(ctx context.Context, key string, incr int) (*Status,
 	total := 0
 	for k, v := range vals {
 		if k > threshold {
-			i, _ := strconv.Atoi(v)
+			i, err := strconv.Atoi(v)
+			if err != nil {
+				return nil, false, err
+			}
 			total += i
 		} else {
 			// Clear the old hash keys
@@ -86,21 +89,21 @@ func (l *Limiter) Increment(ctx context.Context, key string, incr int) (*Status,
 		}
 	}
 
-	// exceeded
+	// exceeded rate limit
 	if total >= int(l.limit) {
 		return &Status{
 			Remaining: 0,
 			Limit:     l.limit,
 			Period:    l.limitPeriod,
 			Reset:     now.Add(l.limitPeriod),
-		}, true, nil
+		}, false, nil
 	}
 
-	// not exceeded
+	// allowed
 	return &Status{
 		Remaining: int(l.limit) - total,
 		Limit:     l.limit,
 		Period:    l.limitPeriod,
 		Reset:     now.Add(l.limitPeriod),
-	}, false, nil
+	}, true, nil
 }

@@ -40,20 +40,20 @@ func TestRateLimit(t *testing.T) {
 		}
 	}
 
-	check(t, Status{Remaining: 9, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
-	check(t, Status{Remaining: 8, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
-	check(t, Status{Remaining: 7, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
-	check(t, Status{Remaining: 6, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
-	check(t, Status{Remaining: 5, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
-	check(t, Status{Remaining: 4, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
-	check(t, Status{Remaining: 3, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
-	check(t, Status{Remaining: 2, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
-	check(t, Status{Remaining: 1, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
-	check(t, Status{Remaining: 0, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 9, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 8, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 7, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 6, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 5, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 4, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 3, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 2, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 1, Limit: 10}, true, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 0, Limit: 10}, false, now.Add(period))(ratelimiter.Increment(ctx, "k", 1))
 
 	// Wait for after the length of period (~3s) to reset the rate limit
 	delay := period + time.Millisecond*10
 	time.Sleep(delay)
 
-	check(t, Status{Remaining: 10, Limit: 10}, false, time.Now().Add(period))(ratelimiter.Increment(ctx, "k", 1))
+	check(t, Status{Remaining: 10, Limit: 10}, true, time.Now().Add(period))(ratelimiter.Increment(ctx, "k", 1))
 }
