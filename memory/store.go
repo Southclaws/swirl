@@ -34,12 +34,17 @@ func (c *Cache) Get(ctx context.Context, key string) (string, error) {
 		return "", errNotFound
 	}
 
-	if v.Expiry.Before(time.Now()) {
+	if v.Expiry != nil && v.Expiry.Before(time.Now()) {
 		c.local.Delete(key)
 		return "", errNotFound
 	}
 
-	return v.Value.(string), nil
+	str, ok := v.Value.(string)
+	if !ok {
+		return "", fmt.Errorf("value is not a string")
+	}
+
+	return str, nil
 }
 
 func (c *Cache) Set(ctx context.Context, key string, value string) error {
@@ -55,41 +60,54 @@ func (c *Cache) Delete(ctx context.Context, key string) error {
 }
 
 func (c *Cache) HIncrBy(ctx context.Context, key string, field string, incr int64) (int, error) {
-	ac, _ := c.local.Compute(key, func(old Entry, found bool) (Entry, bool) {
+	var computeErr error
+	var resultValue int
+
+	c.local.Compute(key, func(old Entry, found bool) (Entry, bool) {
 		if found {
-			hash := old.Value.(map[string]string)
+			oldHash, ok := old.Value.(map[string]string)
+			if !ok {
+				computeErr = fmt.Errorf("value is not a hash map")
+				return old, false
+			}
+
+			hash := make(map[string]string, len(oldHash)+1)
+			for k, v := range oldHash {
+				hash[k] = v
+			}
+
 			if curr, ok := hash[field]; ok {
 				i, err := strconv.Atoi(curr)
 				if err != nil {
+					computeErr = fmt.Errorf("failed to parse field value: %w", err)
 					return old, false
 				}
 
 				i += int(incr)
 				hash[field] = strconv.Itoa(i)
-				old.Value = hash
-				return old, false
+				resultValue = i
 			} else {
-				hash[field] = strconv.Itoa(int(incr))
-				old.Value = hash
-				return old, false
+				resultValue = int(incr)
+				hash[field] = strconv.Itoa(resultValue)
 			}
 
+			old.Value = hash
+			return old, false
 		} else {
+			resultValue = int(incr)
 			hash := map[string]string{
-				field: strconv.Itoa(int(incr)),
+				field: strconv.Itoa(resultValue),
 			}
 			old.Value = hash
 			return old, false
 		}
 	})
 
-	hash := ac.Value.(map[string]string)
-	i, err := strconv.Atoi(hash[field])
-	if err != nil {
-		return 0, fmt.Errorf("failed to convert hash field to integer")
+	if computeErr != nil {
+		return 0, computeErr
 	}
 
-	return i, nil
+	return resultValue, nil
 }
 
 func (c *Cache) HGetAll(ctx context.Context, key string) (map[string]string, error) {
@@ -98,33 +116,48 @@ func (c *Cache) HGetAll(ctx context.Context, key string) (map[string]string, err
 		return map[string]string{}, nil
 	}
 
-	return v.Value.(map[string]string), nil
+	hash, ok := v.Value.(map[string]string)
+	if !ok {
+		return nil, fmt.Errorf("value is not a hash map")
+	}
+
+	copy := make(map[string]string, len(hash))
+	for k, v := range hash {
+		copy[k] = v
+	}
+
+	return copy, nil
 }
 
 func (c *Cache) HDel(ctx context.Context, key string, field string) error {
-	_, ok := c.local.Compute(key, func(old Entry, found bool) (Entry, bool) {
+	var computeErr error
+	c.local.Compute(key, func(old Entry, found bool) (Entry, bool) {
 		if found {
-			hash := old.Value.(map[string]string)
-			delete(hash, field)
+			oldHash, ok := old.Value.(map[string]string)
+			if !ok {
+				computeErr = fmt.Errorf("value is not a hash map")
+				return old, false
+			}
+
+			hash := make(map[string]string, len(oldHash))
+			for k, v := range oldHash {
+				if k != field {
+					hash[k] = v
+				}
+			}
+
 			old.Value = hash
 			return old, false
 		}
 		return old, false
 	})
-	if !ok {
-		return fmt.Errorf("failed to delete hash field")
-	}
 
-	return nil
+	return computeErr
 }
 
 func (c *Cache) Expire(ctx context.Context, key string, expiration time.Duration) error {
 	c.local.Compute(key, func(old Entry, found bool) (Entry, bool) {
 		if found {
-			if old.Expiry != nil && old.Expiry.Before(time.Now()) {
-				return old, true
-			}
-
 			expiry := time.Now().Add(expiration)
 			old.Expiry = &expiry
 			return old, false
